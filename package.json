@@ -1,0 +1,37 @@
+{
+  "name": "medotask",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MedoTask — 多窗口、离线优先的桌面待办应用",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:clean": "vite build --mode clean",
+    "preview": "vite preview",
+    "gateway": "node scripts/gateway.mjs",
+    "package": "node scripts/package.mjs",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:exe": "tauri build --no-bundle",
+    "desktop:exe:clean": "tauri build --no-bundle --config src-tauri/tauri.clean.conf.json",
+    "desktop:run": "node scripts/run-desktop.mjs"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.23",
+    "lucide-vue-next": "^1.0.0",
+    "pinia": "^4.1.0",
+    "reka-ui": "^2.11.0",
+    "sql.js": "^1.15.2",
+    "vue": "^3.5.44",
+    "vue-draggable-plus": "^0.6.1",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.4",
+    "@tauri-apps/cli": "^2.12.4",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "tailwindcss": "^4.3.4",
+    "vite": "^8.3.5"
+  }
+}

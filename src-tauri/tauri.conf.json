@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MedoTask",
+  "mainBinaryName": "medotask-full",
+  "version": "1.0.0",
+  "identifier": "cn.medotask.app",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --strictPort",
+    "devUrl": "http://localhost:5174",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "features": ["assistant"]
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "MedoTask",
+        "width": 900,
+        "height": 700,
+        "minWidth": 420,
+        "minHeight": 420,
+        "resizable": true,
+        "decorations": false,
+        "transparent": false,
+        "center": true,
+        "dragDropEnabled": false,
+        "url": "index.html"
+      }
+    ],
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    },
+    "shortDescription": "MedoTask — 轻量本地待办",
+    "longDescription": "MedoTask：多窗口、离线优先的桌面待办应用。支持周视图、月历总览、重复待办、提醒和已完成事项归档。"
+  }
+}

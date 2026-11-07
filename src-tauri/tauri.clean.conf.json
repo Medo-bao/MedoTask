@@ -1,0 +1,9 @@
+{
+  "mainBinaryName": "medotask-clean",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --mode clean --strictPort",
+    "beforeBuildCommand": "npm run build:clean",
+    "frontendDist": "../dist-clean",
+    "features": []
+  }
+}

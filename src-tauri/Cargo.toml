@@ -1,0 +1,43 @@
+[package]
+name = "medotask"
+version = "1.0.0"
+description = "MedoTask — 轻量本地待办"
+authors = ["MedoTask"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "medotask_lib"
+# rlib only: the desktop binary links the library statically, so shipping the
+# app is a single self-contained .exe (no side-by-side DLL to look up).
+crate-type = ["rlib"]
+
+[features]
+assistant = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))'.dependencies]
+tauri-plugin-autostart = "2"
+
+[target."cfg(windows)".dependencies]
+auto-launch = "0.6"
+windows-registry = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Media_Audio", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
