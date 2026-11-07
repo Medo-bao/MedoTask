@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onScopeDispose, ref, watch } from 'vue'
-import { Archive, CalendarDays, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { Archive, CalendarDays, RotateCcw, Search, Trash2 } from 'lucide-vue-next'
 import TitleBar from '@/components/TitleBar.vue'
 import { useWindows } from '@/composables/useWindows.js'
 import { useTodoStore } from '@/stores/todos.js'
@@ -13,9 +13,18 @@ const windows = useWindows()
 const todos = useTodoStore()
 const items = ref([])
 const busy = ref(false)
+const query = ref('')
+const keyword = computed(() => query.value.trim().toLowerCase())
+const visibleItems = computed(() => {
+  const text = keyword.value
+  if (!text) return items.value
+  return items.value.filter(({ title, content }) =>
+    String(title ?? '').toLowerCase().includes(text) || String(content ?? '').toLowerCase().includes(text)
+  )
+})
 const groups = computed(() => {
   const byDate = new Map()
-  for (const item of items.value) {
+  for (const item of visibleItems.value) {
     if (!byDate.has(item.date)) byDate.set(item.date, [])
     byDate.get(item.date).push(item)
   }
@@ -46,13 +55,22 @@ async function change(item, remove = false) {
 <template>
   <div class="flex h-full flex-col overflow-hidden">
     <TitleBar title="MedoTask 垃圾箱" @close="windows.close('trash')" />
-    <p class="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground">
-      自动汇总今天之前已完成的事项。
-    </p>
+    <div role="search" class="shrink-0 border-b px-3 py-1.5">
+      <div class="relative">
+        <Search aria-hidden="true" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <input
+          v-model="query"
+          type="search"
+          aria-label="搜索垃圾箱"
+          placeholder="搜索标题或备注"
+          class="h-8 w-full min-w-0 rounded-md border border-input bg-background pl-8 pr-2 text-sm ring-focus"
+        />
+      </div>
+    </div>
     <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-      <div v-if="!items.length" class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Archive class="size-6 opacity-60" />
-        垃圾箱是空的
+      <div v-if="!visibleItems.length" class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+        <component :is="keyword ? Search : Archive" aria-hidden="true" class="size-6 opacity-60" />
+        {{ keyword ? '未找到匹配的事项' : '垃圾箱是空的' }}
       </div>
       <section v-for="[date, group] in groups" :key="date" class="pt-2">
         <h2 class="px-1 pb-1 text-xs font-medium text-muted-foreground">{{ dayjsKey(date) }}</h2>
@@ -83,6 +101,8 @@ async function change(item, remove = false) {
         </div>
       </section>
     </div>
-    <footer class="shrink-0 border-t px-3 py-2 text-right text-xs text-muted-foreground">共 {{ items.length }} 条</footer>
+    <footer aria-live="polite" class="shrink-0 border-t px-3 py-2 text-right text-xs text-muted-foreground">
+      {{ keyword ? '找到' : '共' }} {{ visibleItems.length }} 条
+    </footer>
   </div>
 </template>

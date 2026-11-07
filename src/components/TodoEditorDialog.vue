@@ -8,8 +8,8 @@ import { computed, ref, watch } from 'vue'
 import Dialog from './ui/Dialog.vue'
 import Button from './ui/Button.vue'
 import { COLORS } from '@/lib/colors.js'
-import { dayParts } from '@/db/todos.js'
-import { dayjsKey } from '@/lib/dates.js'
+import { repeatDayIndices } from '@/db/todos.js'
+import { dayjsKey, isDateKey } from '@/lib/dates.js'
 
 const props = defineProps({
   open: Boolean,
@@ -27,9 +27,11 @@ const REPEATS = [
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
+const SCHEDULE_FIELDS = ['date', 'repeat', 'repeatDays', 'repeatStartDate', 'repeatEndDate']
 const isChild = computed(() => !!props.todo?.parentId)
 const canRepeat = computed(() => !isChild.value && (!props.todo?.children?.length || !!props.todo.repeat))
 
+let originalFields
 const form = ref({
   title: '',
   content: '',
@@ -37,34 +39,10 @@ const form = ref({
   date: '',
   repeat: null,
   repeatDays: [],
+  repeatEndDate: '',
   reminderTime: '',
   postponeAuto: true,
 })
-
-watch(
-  [() => props.open, () => props.todo],
-  ([open, t]) => {
-    if (!open || !t) return
-    let days = []
-    if (t.repeatDays) {
-      days = String(t.repeatDays)
-        .split(',')
-        .filter(Boolean)
-        .map(Number)
-    }
-    form.value = {
-      title: t.title ?? '',
-      content: t.content ?? '',
-      color: t.color ?? 'default',
-      date: t.date ? dayjsKey(t.date) : '',
-      repeat: t.repeat ?? null,
-      repeatDays: days,
-      reminderTime: t.reminderTime ?? '',
-      postponeAuto: t.postponeAuto ?? true,
-    }
-  },
-  { immediate: true }
-)
 
 const repeatChoices = computed(() => {
   if (form.value.repeat === 'weekly') return WEEKDAYS
@@ -72,13 +50,21 @@ const repeatChoices = computed(() => {
   return []
 })
 
-const chosenDays = computed(() => {
-  if (!repeatChoices.value.length) return []
-  if (form.value.repeatDays.length) return form.value.repeatDays
-  const key = form.value.date.replace(/-/g, '') || props.todo?.date
-  const d = dayParts(key)
-  return [form.value.repeat === 'weekly' ? d.weekdayIndex : d.dayOfMonth - 1]
+const dateKey = computed(() => form.value.date.replace(/-/g, ''))
+const repeatStart = computed(() => {
+  const original = props.todo?.repeatStartDate
+  return dateKey.value === String(props.todo?.date) && isDateKey(original)
+    ? String(original)
+    : dateKey.value
 })
+const repeatEnd = computed(() => form.value.repeatEndDate.replace(/-/g, ''))
+const invalidRepeatEnd = computed(() =>
+  canRepeat.value && !!form.value.repeat && !!repeatEnd.value &&
+  (!isDateKey(repeatEnd.value) || repeatEnd.value < repeatStart.value)
+)
+const chosenDays = computed(() =>
+  repeatDayIndices(form.value.repeat, form.value.repeatDays, repeatStart.value)
+)
 
 function toggleDay(i) {
   const days = new Set(chosenDays.value)
@@ -89,10 +75,11 @@ function toggleDay(i) {
   form.value.repeatDays = [...days].sort((a, b) => a - b)
 }
 
-const canSave = computed(() => !!form.value.title.trim() && (isChild.value || !!form.value.date))
+const canSave = computed(() =>
+  !!form.value.title.trim() && (isChild.value || isDateKey(dateKey.value)) && !invalidRepeatEnd.value
+)
 
-function save(event) {
-  if (event?.repeat || event?.isComposing || event?.keyCode === 229 || props.saving || !canSave.value) return
+function collectFields() {
   const fields = {
     title: form.value.title.trim(),
     content: form.value.content,
@@ -100,20 +87,53 @@ function save(event) {
     reminderTime: form.value.reminderTime,
   }
   if (!isChild.value) {
-    const date = form.value.date.replace(/-/g, '')
     const repeat = canRepeat.value ? form.value.repeat : null
     const days = chosenDays.value
     Object.assign(fields, {
-      date,
+      date: dateKey.value,
       repeat,
       postponeAuto: form.value.postponeAuto,
       repeatDays: repeat && days.length ? `,${days.join(',')},` : null,
-      repeatStartDate: repeat
-        ? (date === String(props.todo.date) && props.todo.repeatStartDate) || date
-        : null,
+      repeatStartDate: repeat ? repeatStart.value : null,
+      repeatEndDate: repeat ? repeatEnd.value || null : null,
     })
   }
-  emit('save', fields)
+  return fields
+}
+
+watch(
+  [() => props.open, () => props.todo],
+  ([open, t]) => {
+    if (!open || !t) return
+    form.value = {
+      title: t.title ?? '',
+      content: t.content ?? '',
+      color: t.color ?? 'default',
+      date: t.date ? dayjsKey(t.date) : '',
+      repeat: t.repeat ?? null,
+      repeatDays: t.repeatDays ?? [],
+      repeatEndDate: t.repeat && isDateKey(t.repeatEndDate) ? dayjsKey(t.repeatEndDate) : '',
+      reminderTime: t.reminderTime ?? '',
+      postponeAuto: t.postponeAuto ?? true,
+    }
+    originalFields = collectFields()
+  },
+  { immediate: true }
+)
+
+function save(event) {
+  if (event?.repeat || event?.isComposing || event?.keyCode === 229 || props.saving || !canSave.value) return
+  const fields = collectFields()
+  if (!props.todo.id) {
+    emit('save', fields)
+    return
+  }
+  // Other windows may have edited fields this dialog left untouched.
+  const changes = Object.fromEntries(Object.entries(fields).filter(([key, value]) => value !== originalFields[key]))
+  if (SCHEDULE_FIELDS.some((key) => Object.hasOwn(changes, key))) {
+    for (const key of SCHEDULE_FIELDS) changes[key] = fields[key]
+  }
+  emit('save', changes)
 }
 </script>
 
@@ -195,6 +215,19 @@ function save(event) {
           {{ d }}
         </button>
       </div>
+
+      <div v-if="canRepeat && form.repeat" class="flex items-center gap-2">
+        <label class="flex min-w-0 flex-1 items-center gap-2">
+          <span class="w-12 shrink-0 text-muted-foreground">截止日期</span>
+          <input
+            v-model="form.repeatEndDate"
+            type="date"
+            class="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs ring-focus"
+          />
+        </label>
+        <Button v-if="form.repeatEndDate" variant="ghost" size="xs" @click="form.repeatEndDate = ''">清除</Button>
+      </div>
+      <p v-if="invalidRepeatEnd" class="text-destructive">截止日期不能早于重复开始日期</p>
 
       <label v-if="!isChild && !form.repeat" class="flex items-center gap-2">
         <span class="w-12 shrink-0 text-muted-foreground">延期</span>

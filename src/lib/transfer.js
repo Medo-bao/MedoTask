@@ -10,7 +10,7 @@ function stamp(key) {
   return dayjsKey(key)
 }
 
-function download(filename, text, mime = 'text/plain;charset=utf-8') {
+export function download(filename, text, mime = 'text/plain;charset=utf-8') {
   const blob = new Blob([text], { type: mime })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -22,18 +22,22 @@ function download(filename, text, mime = 'text/plain;charset=utf-8') {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+function oneLine(text) {
+  return String(text ?? '').replace(/\r\n?|\n/g, ' ')
+}
+
 function checkbox(t) {
-  return `- [${t.completed ? 'x' : ' '}] ${t.title}`
+  return `- [${t.completed ? 'x' : ' '}] ${oneLine(t.title)}`
 }
 
 export function exportMarkdown(list, dateKey) {
   const lines = [`# 待办（${stamp(dateKey)}）`, '']
   for (const t of list) {
     lines.push(checkbox(t))
-    if (t.content) lines.push(`  > ${t.content.replace(/\n/g, ' ')}`)
+    if (t.content) lines.push(`  > ${oneLine(t.content)}`)
     for (const c of t.children ?? []) {
       lines.push(`  ${checkbox(c)}`)
-      if (c.content) lines.push(`    > ${c.content.replace(/\n/g, ' ')}`)
+      if (c.content) lines.push(`    > ${oneLine(c.content)}`)
     }
   }
   download(`待办-${stamp(dateKey)}.md`, lines.join('\n'), 'text/markdown;charset=utf-8')
@@ -42,13 +46,14 @@ export function exportMarkdown(list, dateKey) {
 export function exportHtml(list, dateKey) {
   const esc = (s) =>
     String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+  const details = (todo) => esc(todo.title) + (todo.content ? `<div class="note">${esc(todo.content)}</div>` : '')
   const rows = list
     .map((t) => {
       const cls = t.completed ? 'done' : ''
       const kids = (t.children ?? [])
-        .map((c) => `<li class="child ${c.completed ? 'done' : ''}">${esc(c.title)}</li>`)
+        .map((c) => `<li class="child ${c.completed ? 'done' : ''}">${details(c)}</li>`)
         .join('')
-      return `<li class="${cls}">${esc(t.title)}${kids ? `<ul>${kids}</ul>` : ''}</li>`
+      return `<li class="${cls}">${details(t)}${kids ? `<ul>${kids}</ul>` : ''}</li>`
     })
     .join('\n')
   const html = `<!doctype html>
@@ -59,6 +64,7 @@ h1{font-size:18px}
 ul{list-style:none;padding-left:0}
 li{padding:4px 0;border-bottom:1px solid #eee}
 li.child{margin-left:20px;font-size:13px;color:#555}
+.note{color:#555;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
 .done{text-decoration:line-through;color:#999}
 </style></head><body>
 <h1>待办（${stamp(dateKey)}）</h1>

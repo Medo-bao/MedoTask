@@ -4,10 +4,12 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::{mpsc, Arc, Mutex},
+    sync::{mpsc, Mutex},
     time::{Duration, Instant},
 };
 use tauri::Manager;
+
+use crate::assistant_link::{stop_child, AssistantLink};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(180);
@@ -29,7 +31,7 @@ impl Transport {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct CodexLink(Arc<Mutex<Option<Arc<Session>>>>);
+pub(crate) struct CodexLink(AssistantLink<Session>);
 
 struct Session {
     child: Mutex<Child>,
@@ -37,7 +39,7 @@ struct Session {
 }
 
 impl Session {
-    fn start(executable: &Path, cwd: &Path, transport: Transport) -> Result<Self, String> {
+    fn spawn(executable: &Path, cwd: &Path, transport: Transport) -> Result<Self, String> {
         let mut command = Command::new(executable);
         command
             .arg(transport.command())
@@ -63,7 +65,7 @@ impl Session {
                 }
             }
         });
-        let session = Self {
+        Ok(Self {
             child: Mutex::new(child),
             wire: Mutex::new(Wire {
                 input,
@@ -72,19 +74,19 @@ impl Session {
                 next_id: 0,
                 thread_id: None,
             }),
-        };
-        session
-            .wire
+        })
+    }
+
+    fn initialize(&self) -> Result<(), String> {
+        self.wire
             .lock()
             .map_err(|err| err.to_string())?
-            .initialize()?;
-        Ok(session)
+            .initialize()
     }
 
     fn stop(&self) {
         if let Ok(mut child) = self.child.lock() {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_child(&mut child);
         }
     }
 }
@@ -397,19 +399,11 @@ fn require_assistant(window: &tauri::WebviewWindow) -> Result<(), String> {
     }
 }
 
-impl CodexLink {
-    fn stop(&self) {
-        if let Ok(mut active) = self.0.lock() {
-            if let Some(session) = active.take() {
-                session.stop();
-            }
-        }
-    }
-}
-
 pub(crate) fn disconnect(app: &tauri::AppHandle) {
-    if let Some(state) = app.try_state::<CodexLink>() {
-        state.stop();
+    if let Some(link) = app.try_state::<CodexLink>() {
+        if let Ok((_, Some(session))) = link.0.reset() {
+            tauri::async_runtime::spawn_blocking(move || session.stop());
+        }
     }
 }
 
@@ -425,20 +419,22 @@ pub(crate) async fn codex_connect(
         .map_err(|err| err.to_string())?
         .join("codex-work");
     let link = state.inner().clone();
+    let (generation, previous) = link.0.reset()?;
     tauri::async_runtime::spawn_blocking(move || {
-        let candidates = executables(&path)?;
-        std::fs::create_dir_all(&cwd).map_err(|err| err.to_string())?;
-        let mut active = link.0.lock().map_err(|err| err.to_string())?;
-        if let Some(session) = active.take() {
+        if let Some(session) = previous {
             session.stop();
         }
+        let candidates = executables(&path)?;
+        std::fs::create_dir_all(&cwd).map_err(|err| err.to_string())?;
         let mut last_error = String::new();
         for candidate in candidates {
-            match Session::start(&candidate, &cwd, transport) {
-                Ok(session) => {
-                    *active = Some(Arc::new(session));
-                    return Ok(());
-                }
+            match link.0.connect(
+                generation,
+                || Session::spawn(&candidate, &cwd, transport),
+                Session::initialize,
+            ) {
+                Ok(true) => return Ok(()),
+                Ok(false) => return Err("Codex 已断开连接".into()),
                 Err(err) => last_error = err,
             }
         }
@@ -460,12 +456,7 @@ pub(crate) async fn codex_chat(
     instructions: String,
 ) -> Result<String, String> {
     require_assistant(&window)?;
-    let session = state
-        .0
-        .lock()
-        .map_err(|err| err.to_string())?
-        .clone()
-        .ok_or("请先连接 Codex")?;
+    let session = state.0.session()?.ok_or("请先连接 Codex")?;
     tauri::async_runtime::spawn_blocking(move || {
         session
             .wire
@@ -483,8 +474,10 @@ pub(crate) async fn codex_disconnect(
     state: tauri::State<'_, CodexLink>,
 ) -> Result<(), String> {
     require_assistant(&window)?;
-    let link = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || link.stop())
-        .await
-        .map_err(|err| err.to_string())
+    if let Some(session) = state.0.reset()?.1 {
+        tauri::async_runtime::spawn_blocking(move || session.stop())
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
 }

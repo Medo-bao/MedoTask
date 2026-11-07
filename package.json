@@ -1,6 +1,6 @@
 {
   "name": "medotask",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "MedoTask — 多窗口、离线优先的桌面待办应用",

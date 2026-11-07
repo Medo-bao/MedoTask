@@ -18,8 +18,9 @@ import { useSettingsStore } from '@/stores/settings.js'
 import { useWindows } from '@/composables/useWindows.js'
 import { toast } from '@/stores/toast.js'
 import { exportDatabase, previewBackup, recoveryPoint, reset, restoreRecoveryPoint } from '@/db/database.js'
-import { dayjsKey, isDateKey } from '@/lib/dates.js'
+import { dayjsKey, isDateKey, toKey } from '@/lib/dates.js'
 import { colorOf } from '@/lib/colors.js'
+import { download } from '@/lib/transfer.js'
 
 const settings = useSettingsStore()
 const windows = useWindows()
@@ -129,13 +130,7 @@ watch(tab, (value) => { if (value === 'data') void refreshRecovery() })
 async function doExport() {
   try {
     const backup = await exportDatabase()
-    const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `kite-backup-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    download(`medotask-backup-${dayjsKey(toKey())}.json`, JSON.stringify(backup), 'application/json')
     toast('已导出备份', 'success')
   } catch (err) {
     toast(`导出失败：${err.message}`, 'error')

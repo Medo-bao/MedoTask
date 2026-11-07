@@ -27,31 +27,42 @@ const invoke = window.__TAURI__?.core?.invoke
 let controller = null
 let stopped = false
 const usesCodex = computed(() => activeConfig.value.provider === 'codex')
+/** Desktop only: the DSH provider talks to a local runtime over stdio. */
+const localDsh = computed(() => !!invoke && activeConfig.value.provider === 'dsh')
+const usesLink = computed(() => usesCodex.value || localDsh.value)
+const linkName = computed(() => (usesCodex.value ? 'Codex' : 'DSH'))
 const connecting = computed(() => status.value === 'connecting')
 const statusText = computed(() => {
-  if (status.value === 'ok') return usesCodex.value ? 'Codex 已连接' : '助手已连接'
-  if (connecting.value) return '正在连接 Codex…'
-  return status.value === 'unknown' && !usesCodex.value ? '检测中…' : '未连接'
+  if (status.value === 'ok') return usesLink.value ? `${linkName.value} 已连接` : '助手已连接'
+  if (connecting.value) return `正在连接 ${linkName.value}…`
+  return status.value === 'unknown' && !usesLink.value ? '检测中…' : '未连接'
 })
 const latestReply = computed(() => messages.value.findLast((message) => message.role === 'assistant'))
 const canCreateTodos = computed(() => !busy.value && latestReply.value?.complete && !!latestReply.value.content.trim())
 
 async function checkStatus() {
-  if (usesCodex.value) return
+  if (usesLink.value) return
   const checked = activeConfig.value
   const r = await probe()
   if (activeConfig.value === checked) status.value = r.ok ? 'ok' : 'down'
 }
 
-async function connectCodex() {
+async function connect() {
   if (!invoke || busy.value || connecting.value || status.value === 'ok') return
   status.value = 'connecting'
   connectionError.value = ''
   try {
-    await invoke('codex_connect', {
-      transport: activeConfig.value.codexTransport,
-      path: activeConfig.value.codexPath,
-    })
+    if (usesCodex.value) {
+      await invoke('codex_connect', {
+        transport: activeConfig.value.codexTransport,
+        path: activeConfig.value.codexPath,
+      })
+    } else {
+      await invoke('dsh_connect', {
+        path: activeConfig.value.dshPath,
+        model: activeConfig.value.model,
+      })
+    }
     status.value = 'ok'
     inputEl.value?.focus()
   } catch (err) {
@@ -60,34 +71,59 @@ async function connectCodex() {
   }
 }
 
-async function disconnectCodex() {
-  if (invoke) await invoke('codex_disconnect').catch(() => {})
+async function disconnect() {
   status.value = 'down'
+  if (!invoke) return
+  await invoke(usesCodex.value ? 'codex_disconnect' : 'dsh_disconnect').catch(() => {})
+}
+
+/** Tauri's streaming channel, when the shell provides one. */
+function createChannel(onDelta) {
+  const Channel = window.__TAURI__?.core?.Channel
+  if (!Channel) return null
+  const channel = new Channel()
+  channel.onmessage = onDelta
+  return channel
 }
 
 async function send() {
   const text = input.value.trim()
   if (!text || busy.value) return
   const codex = usesCodex.value
-  if (codex && status.value !== 'ok') {
-    toast('请先连接 Codex', 'info')
+  const dsh = localDsh.value
+  if ((codex || dsh) && status.value !== 'ok') {
+    toast(`请先连接 ${codex ? 'Codex' : 'DSH'}`, 'info')
     return
   }
 
   messages.value.push({ role: 'user', content: text })
   input.value = ''
+  stopped = false
+  connectionError.value = ''
   busy.value = true
-  await scrollToEnd()
 
   messages.value.push({ role: 'assistant', content: '', complete: false })
   const target = messages.value[messages.value.length - 1]
-
-  stopped = false
+  const appendDelta = (delta) => {
+    if (stopped) return
+    target.content += delta
+    void scrollToEnd()
+  }
+  void scrollToEnd()
   try {
-    if (codex) {
-      target.content = await invoke('codex_chat', {
+    if (dsh) {
+      const channel = createChannel(appendDelta)
+      const reply = await invoke('dsh_chat', {
+        prompt: text,
+        instructions: activeConfig.value.systemPrompt,
+        ...(channel ? { onDelta: channel } : {}),
+      })
+      if (!stopped) target.content = reply
+    } else if (codex) {
+      const reply = await invoke('codex_chat', {
         prompt: text, instructions: activeConfig.value.systemPrompt,
       })
+      if (!stopped) target.content = reply
     } else {
       controller = new AbortController()
       await streamChat(
@@ -96,10 +132,7 @@ async function send() {
             .filter((m) => m.content && (m.role === 'user' || m.complete))
             .map(({ role, content }) => ({ role, content })),
         },
-        (delta) => {
-          target.content += delta
-          scrollToEnd()
-        },
+        appendDelta,
         controller.signal
       )
     }
@@ -107,10 +140,15 @@ async function send() {
     target.complete = !stopped
     if (!stopped) status.value = 'ok'
   } catch (err) {
-    if (!target.content.trim()) target.content = stopped ? '已停止生成' : `出错了：${err?.message ?? err}`
-    if (codex && !stopped) await disconnectCodex()
-    if (!codex && !stopped) status.value = 'down'
+    if (!stopped) {
+      const detail = String(err?.message ?? err)
+      if (target.content.trim()) connectionError.value = detail
+      else target.content = `出错了：${detail}`
+      if (codex || dsh) await disconnect()
+      else status.value = 'down'
+    }
   } finally {
+    if (stopped && !target.content.trim()) target.content = '已停止生成'
     busy.value = false
     controller = null
     await scrollToEnd()
@@ -119,7 +157,7 @@ async function send() {
 
 function stop() {
   stopped = true
-  if (usesCodex.value) void disconnectCodex()
+  if (usesLink.value) void disconnect()
   controller?.abort()
 }
 
@@ -137,7 +175,7 @@ async function toTodos() {
 }
 
 async function clearChat() {
-  if (usesCodex.value) await disconnectCodex()
+  if (usesLink.value) await disconnect()
   messages.value = []
 }
 
@@ -159,13 +197,18 @@ async function saveConfigAndClose() {
     config.value.codexTransport !== previous.codexTransport ||
     config.value.codexPath !== previous.codexPath
   )
-  if (changedCodex) await disconnectCodex()
+  const changedDsh = previous.provider === 'dsh' && (
+    config.value.provider !== 'dsh' ||
+    config.value.dshPath !== previous.dshPath ||
+    config.value.model !== previous.model
+  )
+  if (changedCodex || changedDsh) await disconnect()
   activeConfig.value = saveConfig(config.value)
   showConfig.value = false
   connectionError.value = ''
-  if (usesCodex.value) {
-    if (previous.provider !== 'codex') status.value = 'down'
-    await connectCodex()
+  if (usesLink.value) {
+    if (activeConfig.value.provider !== previous.provider) status.value = 'down'
+    await connect()
     return
   }
   status.value = 'unknown'
@@ -193,8 +236,8 @@ onMounted(async () => {
         {{ statusText }}
       </span>
       <div class="flex items-center gap-1">
-        <Button v-if="usesCodex && status !== 'ok'" size="sm" variant="ghost" :disabled="busy || connecting" @click="connectCodex">
-          连接 Codex
+        <Button v-if="usesLink && status !== 'ok'" size="sm" variant="ghost" :disabled="busy || connecting" @click="connect">
+          连接 {{ linkName }}
         </Button>
         <button class="title-bar-btn h-6 w-6" title="清空对话" :disabled="busy || connecting" @click="clearChat">
           <Trash2 class="h-3.5 w-3.5" />
@@ -239,7 +282,7 @@ onMounted(async () => {
         <Button v-if="busy" title="停止生成" size="sm" variant="outline" @click="stop">
           <Square class="h-3.5 w-3.5" />
         </Button>
-        <Button v-else title="发送" size="sm" :disabled="!input.trim() || (usesCodex && status !== 'ok')" @click="send">
+        <Button v-else title="发送" size="sm" :disabled="!input.trim() || (usesLink && status !== 'ok')" @click="send">
           <CornerDownLeft class="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -266,7 +309,27 @@ onMounted(async () => {
           </select>
         </label>
 
-        <template v-if="config.provider === 'codex'">
+        <template v-if="config.provider === 'dsh' && invoke">
+          <label class="mb-2 flex flex-col gap-1">
+            <span class="text-muted-foreground">dsh 启动文件</span>
+            <input
+              v-model.trim="config.dshPath"
+              class="h-8 rounded-md border border-input bg-background px-2 ring-focus"
+              placeholder="留空自动查找，可填写 dsh.cmd 的绝对路径"
+            />
+          </label>
+          <label class="mb-2 flex flex-col gap-1">
+            <span class="text-muted-foreground">模型（可选）</span>
+            <input
+              v-model.trim="config.model"
+              class="h-8 rounded-md border border-input bg-background px-2 ring-focus"
+              placeholder="deepseek-flash"
+            />
+          </label>
+          <p class="mb-3 text-muted-foreground">使用本机 DeepSeek Harness 的登录状态。助手在只读沙箱中运行，不会改动你的文件。</p>
+        </template>
+
+        <template v-else-if="config.provider === 'codex'">
           <label class="mb-2 flex flex-col gap-1">
             <span class="text-muted-foreground">连接方式</span>
             <select v-model="config.codexTransport" class="h-8 rounded-md border border-input bg-background px-2 ring-focus">
@@ -285,7 +348,10 @@ onMounted(async () => {
           <p class="mb-3 text-muted-foreground">使用本机 Codex 的登录状态。发送的对话由 Codex 处理。</p>
         </template>
 
-        <template v-else-if="config.provider !== 'off'">
+        <template v-else-if="config.provider === 'openai' || config.provider === 'dsh'">
+          <p v-if="config.provider === 'dsh'" class="mb-3 text-muted-foreground">
+            Web 版通过下方配置的兼容网关连接 DeepSeek Harness。
+          </p>
           <label class="mb-2 flex flex-col gap-1">
             <span class="text-muted-foreground">地址</span>
             <input
@@ -317,7 +383,9 @@ onMounted(async () => {
       </div>
       <template #footer>
         <Button variant="outline" size="sm" @click="showConfig = false">取消</Button>
-        <Button size="sm" @click="saveConfigAndClose">{{ config.provider === 'codex' ? '保存并连接' : '保存' }}</Button>
+        <Button size="sm" @click="saveConfigAndClose">
+          {{ invoke && (config.provider === 'codex' || config.provider === 'dsh') ? '保存并连接' : '保存' }}
+        </Button>
       </template>
     </Dialog>
   </div>

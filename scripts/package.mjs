@@ -24,6 +24,21 @@ const EDITIONS = [
   { name: 'Clean', label: '纯净版', dist: 'dist-clean' },
 ]
 
+const SOURCE_ENTRIES = new Set([
+  '.gitignore',
+  '.npmrc',
+  'README.md',
+  'index.html',
+  'package.json',
+  'package-lock.json',
+  'vite.config.js',
+  'docs',
+  'public',
+  'scripts',
+  'src',
+  'src-tauri',
+])
+
 const EXCLUDE_DIRS = new Set([
   'node_modules',
   'dist',
@@ -37,9 +52,37 @@ const EXCLUDE_DIRS = new Set([
   '.tmp',
   '.cargo-home',
   '.desktop-home',
+  '.dsh-test',
   '.git',
   '.npm-cache',
 ])
+
+const LOCAL_SOURCE_FILES = [
+  /^\.env(?:\.|$)/i,
+  /^\.credentials\.yaml$/i,
+  /^e2e-report\.json$/i,
+  /\.(?:db|sqlite3?)(?:-wal|-shm)?$/i,
+  /\.(?:log|jsonl)$/i,
+  /-backup-.*\.json$/i,
+]
+
+function includeSource(file) {
+  const name = path.basename(file)
+  return !EXCLUDE_DIRS.has(name) &&
+    !LOCAL_SOURCE_FILES.some((pattern) => pattern.test(name)) &&
+    path.relative(ROOT, file) !== path.join('public', 'sql-wasm-browser.wasm') &&
+    !fs.lstatSync(file).isSymbolicLink()
+}
+
+function copySource(dest) {
+  fs.mkdirSync(dest)
+  for (const name of SOURCE_ENTRIES) {
+    const from = path.join(ROOT, name)
+    if (fs.existsSync(from)) {
+      fs.cpSync(from, path.join(dest, name), { recursive: true, filter: includeSource })
+    }
+  }
+}
 
 /** Zip a directory with the platform's archive tool. */
 function zip(sourceDir, outFile) {
@@ -108,6 +151,11 @@ function checkDesktopBuild(exe, label) {
   }
 }
 
+const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'))
+if ([lock, lock.packages?.['']].some((entry) => entry?.name !== pkg.name || entry?.version !== VERSION)) {
+  throw new Error('package-lock.json 的项目名或版本与 package.json 不一致。')
+}
+
 for (const { dist } of EDITIONS) {
   if (!fs.existsSync(path.join(ROOT, dist, 'index.html'))) {
     console.error(`${dist}/ 不存在，请先构建两个版本`)
@@ -167,7 +215,7 @@ try {
   }
 
   const srcDir = path.join(staging, 'source')
-  copyTree(ROOT, srcDir)
+  copySource(srcDir)
   archive(srcDir, 'source', '工程源码')
   for (const [file] of results) fs.renameSync(file, path.join(OUT, path.basename(file)))
 } finally {

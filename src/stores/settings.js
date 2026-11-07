@@ -32,6 +32,8 @@ const DEFAULTS = {
   countdown: null,
 }
 
+const RESERVED_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype'])
+
 /** "a.b.c" tree -> flat key/value pairs */
 function flatten(obj, prefix = '', out = {}) {
   for (const [k, v] of Object.entries(obj || {})) {
@@ -47,12 +49,15 @@ function flatten(obj, prefix = '', out = {}) {
 function unflatten(rows) {
   const out = {}
   for (const { key, value } of rows) {
+    if (typeof key !== 'string' || (typeof value !== 'string' && typeof value !== 'number')) continue
     const parts = key.split('.')
+    if (parts.some((part) => !part || RESERVED_SEGMENTS.has(part))) continue
     let cur = out
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i]
+      if (Array.isArray(cur) && part === 'length') break
       if (i === parts.length - 1) {
-        cur[part] = value
+        if (!cur[part] || typeof cur[part] !== 'object') cur[part] = String(value)
         break
       }
       if (!cur[part] || typeof cur[part] !== 'object') {
@@ -67,9 +72,10 @@ function unflatten(rows) {
 function deepMerge(base, extra) {
   const out = { ...base }
   for (const [k, v] of Object.entries(extra || {})) {
-    if (v && typeof v === 'object' && !Array.isArray(v) && base?.[k] && typeof base[k] === 'object') {
-      out[k] = deepMerge(base[k], v)
-    } else {
+    const fallback = base[k]
+    if (fallback && typeof fallback === 'object') {
+      if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = deepMerge(fallback, v)
+    } else if (typeof fallback !== 'string' || typeof v === 'string') {
       out[k] = v
     }
   }

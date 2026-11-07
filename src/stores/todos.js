@@ -205,6 +205,7 @@ export const useTodoStore = defineStore('todos', () => {
   }
 
   async function updateFields(todo, fields) {
+    if (!Object.keys(fields).length) return
     await write(() => {
       const current = db.todoById(todo.id)
       if (!current) throw new Error('这条待办已删除')

@@ -89,10 +89,7 @@ function repeatsOnDate(todo, date, parts = dayParts(date)) {
   if (todo.repeat !== 'weekly' && todo.repeat !== 'monthly') return false
   const weekly = todo.repeat === 'weekly'
   const index = weekly ? parts.weekdayIndex : parts.dayOfMonth - 1
-  if (todo.repeatDays) return todo.repeatDays.split(',').includes(String(index))
-  // Earlier editors could save rules without choosing a weekday or day of month.
-  const start = dayParts(todo.repeatStartDate || todo.date)
-  return index === (weekly ? start.weekdayIndex : start.dayOfMonth - 1)
+  return repeatDayIndices(todo.repeat, todo.repeatDays, todo.repeatStartDate || todo.date).includes(index)
 }
 
 export function repeatedTodosInRange(start, end) {
@@ -387,7 +384,7 @@ function camelToSnake(s) {
 }
 
 /** Split a YYYYMMDD key into calendar parts. */
-export function dayParts(key) {
+function dayParts(key) {
   const value = String(key ?? '')
   const y = Number(value.slice(0, 4))
   const m = Number(value.slice(4, 6))
@@ -400,4 +397,19 @@ export function dayParts(key) {
     dayOfMonth: d,
     weekdayIndex: weekday === 0 ? 6 : weekday - 1,
   }
+}
+
+/** Keep usable stored choices, or derive the default from the first day. */
+export function repeatDayIndices(repeat, stored, startDate) {
+  const limit = repeat === 'weekly' ? 7 : repeat === 'monthly' ? 31 : 0
+  if (!limit) return []
+  const days = String(stored ?? '').split(',')
+    .map((value) => value.trim())
+    .filter((value) => /^\d{1,2}$/.test(value))
+    .map(Number)
+    .filter((value) => value < limit)
+  if (days.length) return [...new Set(days)].sort((a, b) => a - b)
+  if (!isDateKey(startDate)) return []
+  const start = dayParts(startDate)
+  return [repeat === 'weekly' ? start.weekdayIndex : start.dayOfMonth - 1]
 }

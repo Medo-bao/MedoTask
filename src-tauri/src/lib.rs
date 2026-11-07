@@ -9,9 +9,13 @@ use std::path::PathBuf;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[cfg(all(desktop, feature = "assistant"))]
+mod assistant_link;
+#[cfg(all(desktop, feature = "assistant"))]
 mod codex_link;
 #[cfg(desktop)]
 mod desktop;
+#[cfg(all(desktop, feature = "assistant"))]
+mod dsh_link;
 #[cfg(windows)]
 mod mini_dock;
 #[cfg(windows)]
@@ -201,8 +205,9 @@ pub fn run() {
             desktop::close_to_tray(window, event);
             #[cfg(feature = "assistant")]
             if window.label() == "ai" && matches!(event, tauri::WindowEvent::Destroyed) {
-                let app = window.app_handle().clone();
-                tauri::async_runtime::spawn_blocking(move || codex_link::disconnect(&app));
+                let app = window.app_handle();
+                dsh_link::disconnect(app);
+                codex_link::disconnect(app);
             }
         });
     #[cfg(all(desktop, not(windows)))]
@@ -215,6 +220,8 @@ pub fn run() {
     let builder = builder.manage(std::sync::Mutex::new(mini_dock::MiniDock::default()));
     #[cfg(all(desktop, feature = "assistant"))]
     let builder = builder.manage(codex_link::CodexLink::default());
+    #[cfg(all(desktop, feature = "assistant"))]
+    let builder = builder.manage(dsh_link::DshLink::default());
 
     builder
         .plugin(tauri_plugin_opener::init())
@@ -286,6 +293,12 @@ pub fn run() {
             codex_link::codex_chat,
             #[cfg(all(desktop, feature = "assistant"))]
             codex_link::codex_disconnect,
+            #[cfg(all(desktop, feature = "assistant"))]
+            dsh_link::dsh_connect,
+            #[cfg(all(desktop, feature = "assistant"))]
+            dsh_link::dsh_chat,
+            #[cfg(all(desktop, feature = "assistant"))]
+            dsh_link::dsh_disconnect,
             #[cfg(desktop)]
             desktop::quit_desktop
         ])

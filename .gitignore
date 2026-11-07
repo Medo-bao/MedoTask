@@ -9,6 +9,7 @@ dist-release/
 .npm-cache/
 .nsis/
 .dsh-test/
+e2e-report.json
 src-tauri/target/
 src-tauri/gen/
 .env

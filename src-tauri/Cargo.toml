@@ -1,6 +1,6 @@
 [package]
 name = "medotask"
-version = "1.0.0"
+version = "1.0.1"
 description = "MedoTask — 轻量本地待办"
 authors = ["MedoTask"]
 edition = "2021"

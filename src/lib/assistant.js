@@ -6,7 +6,9 @@
  *
  * The transport is pluggable:
  *
- *   - `dsh`     : DeepSeek Harness, via its HTTP surface on localhost
+ *   - `dsh`     : DeepSeek Harness. The desktop shell spawns the local
+ *                 `dsh --profile sdk` stdio runtime over IPC; a browser build
+ *                 has no shell, so it falls back to an HTTP surface.
  *   - `openai`  : any OpenAI-compatible endpoint the user configures
  *                 (e.g. a locally served llama.cpp / Ollama gateway)
  *   - `off`     : disabled
@@ -41,11 +43,13 @@ export function saveConfig(cfg) {
 export const DEFAULTS = {
   provider: 'dsh', // dsh | openai | codex | off
   /**
-   * DeepSeek Harness serves an OpenAI-compatible surface. Its profiles are
-   * configured with `api: openai-completions`, i.e. POST /v1/chat/completions,
-   * so the default points at a local DSH gateway.
+   * Browser fallback for `dsh`: an OpenAI-compatible gateway in front of the
+   * local runtime. The desktop shell ignores this and speaks the SDK stdio
+   * protocol directly.
    */
   endpoint: 'http://127.0.0.1:11434',
+  /** Absolute path to `dsh.cmd` / `dsh.exe`; empty means look it up. */
+  dshPath: '',
   model: '',
   apiKey: '',
   codexTransport: 'app-server',
@@ -107,12 +111,12 @@ async function streamOpenAi(cfg, req, onDelta, signal) {
 /* ------------------------------------------------------------------ */
 
 /**
- * DSH exposes a local HTTP surface. The exact route set depends on the
- * installed version, so this speaks the OpenAI-compatible shape DSH's web
- * profile serves and falls back to a plain streamed text response.
+ * DSH's browser fallback. The desktop shell does not use this path: it owns a
+ * real `dsh --profile sdk` child process, because DSH has no OpenAI-compatible
+ * HTTP route of its own.
  *
- * Kept behind a function so swapping in a future native IPC bridge only
- * touches this one place.
+ * Kept for the web build, where the user runs a gateway such as
+ * `scripts/gateway.mjs` in front of a local runtime.
  */
 async function streamDsh(cfg, req, onDelta, signal) {
   const base = (cfg.endpoint || DEFAULTS.endpoint).replace(/\/+$/, '')

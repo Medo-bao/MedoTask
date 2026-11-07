@@ -124,16 +124,14 @@ function openNewTodo(parent = null) {
   }, draft ? quickInput.value : null)
 }
 
-async function submitQuickTodo(keepOpen = false) {
+async function submitQuickTodo() {
   const draft = quickDraft.value
   const title = draft?.title.trim()
   if (!title || quickSaving.value) return
   quickSaving.value = true
   try {
     await todos.addTodo({ title, date: String(draft.date) })
-    if (keepOpen) {
-      draft.title = ''
-    } else closeQuickInput()
+    closeQuickInput()
     if (draft.date !== todos.currentDate) {
       toast(`已添加到${fromKey(draft.date).format('M月D日')}`, 'success')
     }
@@ -141,7 +139,6 @@ async function submitQuickTodo(keepOpen = false) {
     toast(err.message || '添加失败', 'error')
   } finally {
     quickSaving.value = false
-    if (keepOpen) nextTick(() => quickInput.value?.focus())
   }
 }
 
@@ -205,10 +202,11 @@ async function onEditorSaved(fields) {
   try {
     if (todo.id) await todos.updateFields(todo, fields)
     else await todos.addTodo({ ...fields, parentId: todo.parentId })
-    if (fields.date && !fields.repeat) await todos.setCurrentDate(fields.date)
+    const repeat = Object.hasOwn(fields, 'repeat') ? fields.repeat : todo.repeat
+    if (fields.date && !repeat) await todos.setCurrentDate(fields.date)
     if (!todo.id && !todo.parentId) quickDraft.value = null
     closeEditorAfterChange()
-    if (fields.repeat) toast('已保存重复待办', 'success')
+    if (repeat && Object.keys(fields).length) toast('已保存重复待办', 'success')
   } catch (err) {
     toast(err.message || '保存失败', 'error')
   } finally {
@@ -400,15 +398,13 @@ function doExport(kind) {
             ref="quickForm"
             id="inline-todo-editor"
             aria-label="列表内新建待办"
-            class="flex flex-col gap-1 rounded-md border-y bg-muted/35 py-1.5 pl-2.5 pr-1.5"
-            @submit.prevent="submitQuickTodo()"
+            class="flex flex-col gap-1 rounded-md border bg-muted/35 px-2 py-1.5"
+            @submit.prevent="submitQuickTodo"
           >
-            <p v-if="quickDraft.date !== todos.currentDate" class="pl-11 text-xs text-muted-foreground">
+            <p v-if="quickDraft.date !== todos.currentDate" class="px-1 text-xs text-muted-foreground">
               添加到 {{ fromKey(quickDraft.date).format('M月D日') }}
             </p>
-            <div class="flex min-w-0 items-center gap-2">
-              <span aria-hidden="true" class="w-3.5 shrink-0" />
-              <span aria-hidden="true" class="size-4 shrink-0 rounded border border-primary" />
+            <div class="flex min-w-0 items-center gap-1.5">
               <input
                 ref="quickInput"
                 v-model="quickDraft.title"
@@ -419,26 +415,22 @@ function doExport(kind) {
                 @keydown.enter="quickEnter"
                 @keydown.esc="quickEscape"
               />
-              <Button size="xs" type="submit" :disabled="quickSaving || !quickDraft.title.trim()">保存</Button>
-              <Button size="xs" variant="secondary" type="button" :disabled="quickSaving || !quickDraft.title.trim()" @click="submitQuickTodo(true)">
-                保存并继续
-              </Button>
-              <Button size="xs" variant="ghost" class="px-1.5" title="新建待办详情" aria-label="新建待办详情" :disabled="quickSaving" @click="openNewTodo()">
+              <Button size="xs" type="submit" :disabled="quickSaving || !quickDraft.title.trim()">添加</Button>
+              <Button size="xs" variant="ghost" type="button" class="px-1.5" title="新建待办详情" aria-label="新建待办详情" :disabled="quickSaving" @click="openNewTodo()">
                 <SquarePen class="size-3.5" />
               </Button>
-              <Button size="xs" variant="ghost" class="px-1.5" title="取消新建待办" aria-label="取消新建待办" :disabled="quickSaving" @click="closeQuickInput(true)">
+              <Button size="xs" variant="ghost" type="button" class="px-1.5" title="取消新建待办" aria-label="取消新建待办" :disabled="quickSaving" @click="closeQuickInput(true)">
                 <X class="size-3.5" />
               </Button>
             </div>
           </form>
 
           <Button
+            v-else
             ref="addButton"
             variant="secondary"
             class="mt-1.5 h-9 w-full shrink-0"
             aria-label="新建待办"
-            :aria-expanded="!!quickDraft"
-            :aria-controls="quickDraft ? 'inline-todo-editor' : undefined"
             @click="openQuickInput"
           >
             <span class="text-lg leading-none">+</span>
